@@ -1,16 +1,15 @@
 package com.seigneurin.adManager;
 
-import com.gargoylesoftware.htmlunit.BrowserVersion;
-import com.gargoylesoftware.htmlunit.ElementNotFoundException;
-import com.gargoylesoftware.htmlunit.WebClient;
-import com.gargoylesoftware.htmlunit.html.*;
-
 import org.junit.Assert;
+import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.firefox.FirefoxDriver;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.*;
-import java.net.URLConnection;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -23,17 +22,25 @@ public class Main {
 
     private static SellerSettings sellerSettings;
     private static ObjectSettings objectSettings;
-    private static WebClient webClient;
+    private static WebDriver driver;
 
     public static void main(String[] args) throws Exception {
         Logger.getLogger("com.gargoylesoftware.htmlunit").setLevel(Level.OFF);
 
         parseArguments(args);
         loadConfiguration();
-        if ("unpublish".equals(action) || "republish".equals(action))
+        
+    	driver = new FirefoxDriver();
+    	driver.manage().timeouts().implicitlyWait(5, TimeUnit.SECONDS); // manage the wait
+    	
+        if ("unpublish".equals(action) || "republish".equals(action)) {
             deleteAd();
-        if ("publish".equals(action) || "republish".equals(action))
-        postAd();
+        }
+        if ("publish".equals(action) || "republish".equals(action)) {
+            postAd();
+        }
+        
+        driver.quit();
     }
 
     private static void parseArguments(String[] args) {
@@ -61,192 +68,124 @@ public class Main {
         System.exit(1);
     }
 
-    private static void prepareWebClient() {
-        webClient = new WebClient(BrowserVersion.FIREFOX_3);
-        webClient.setThrowExceptionOnScriptError(false);
-    }
-
-    private static HtmlPage loadAccountPage() throws IOException {
+    private static void loadAccountPage() {
         // load the home page
 
         logger.log(Level.INFO, "Chargement de la page d'accueil...");
-        HtmlPage homePage = webClient.getPage("http://www.leboncoin.fr/");
-        Assert.assertEquals("Petites annonces gratuites d'occasion - leboncoin.fr", homePage.getTitleText());
+        driver.get("http://www.leboncoin.fr/");
+        Assert.assertEquals("Petites annonces gratuites d'occasion - leboncoin.fr", driver.getTitle());
 
         // click the link to the region
-
         logger.log(Level.INFO, "Sélection de la région...");
-        HtmlAnchor regionLink = homePage.getFirstAnchorByText(sellerSettings.region);
-        Assert.assertNotNull(regionLink);
-
-        HtmlPage regionHomePage = regionLink.click();
-        Assert.assertNotNull(regionHomePage);
-        Assert.assertEquals("Annonces " + sellerSettings.region + " - leboncoin.fr", regionHomePage.getTitleText());
+        driver.findElement(By.xpath("//a[@title='" + sellerSettings.region + "']")).click();
+        WebElement submitElement = driver.findElement(By.xpath("//input[@type='submit']")); // small kludge: wait for page load after click()
+        Assert.assertEquals("Annonces " + sellerSettings.region + " - leboncoin.fr", driver.getTitle());
 
         // fill-in the login form
-
-        HtmlForm form = regionHomePage.getFormByName("loginform");
-
         logger.log(Level.INFO, "Connexion au compte utilisateur...");
-
-        HtmlInput usernameElement = (HtmlInput) form.getInputByName("st_username");
-        usernameElement.setValueAttribute(sellerSettings.email);
-
-        HtmlInput passwordElement = (HtmlInput) form.getInputByName("st_passwd");
-        passwordElement.setValueAttribute(sellerSettings.password);
-
-        HtmlInput okButton = form.getFirstByXPath("//input[@type='submit']");
-        HtmlPage accountPage = okButton.click();
-        Assert.assertNotNull(accountPage);
-        Assert.assertEquals("Compte", accountPage.getTitleText());
-        return accountPage;
+        driver.findElement(By.name("st_username")).sendKeys(sellerSettings.email);
+        driver.findElement(By.name("st_passwd")).sendKeys(sellerSettings.password);
+        submitElement.click();
+        driver.findElement(By.id("account_login")); // wait for page load after click()
+        Assert.assertEquals("Compte", driver.getTitle());
     }
 
-    private static void postAd() throws Exception {
-        prepareWebClient();
-        HtmlPage accountPage = loadAccountPage();
+    private static void postAd() {
+        loadAccountPage();
 
         // click the link to the page to post an ad
-
         logger.log(Level.INFO, "Chargement de la page de dépôt d'annonces...");
-        HtmlAnchor postAdLink = accountPage.getFirstAnchorByText("Déposer une annonce");
-        Assert.assertNotNull(postAdLink);
-
-        HtmlPage postAdPage = postAdLink.click();
-        Assert.assertNotNull(postAdPage);
-        Assert.assertEquals("Formulaire de dépôt de petites annonces gratuites sur Leboncoin.fr",
-                postAdPage.getTitleText());
+        driver.findElement(By.xpath("//a[text()='Déposez une annonce']")).click();
+        WebElement form = driver.findElement(By.name("formular")); // wait after click()
+        Assert.assertEquals("Formulaire de dépôt de petites annonces gratuites sur Leboncoin.fr", driver.getTitle());
 
         // fill-in the form
-
-        HtmlForm form = postAdPage.getFormByName("formular");
-
         logger.log(Level.INFO, "Remplissage des champs 'Localisation'...");
-
-        HtmlSelect regionElement = form.getSelectByName("region");
-        selectOption(regionElement, sellerSettings.region);
-
-        HtmlSelect departementElement = form.getSelectByName("dpt_code");
-        selectOption(departementElement, sellerSettings.departement);
-
-        HtmlInput zipCodeElement = (HtmlInput) form.getInputByName("zipcode");
-        zipCodeElement.setValueAttribute(sellerSettings.zipCode);
+        selectOption(form.findElement(By.name("region")), sellerSettings.region);
+        selectOption(form.findElement(By.name("dpt_code")), sellerSettings.departement);
+        form.findElement(By.name("zipcode")).sendKeys(sellerSettings.zipCode);
 
         logger.log(Level.INFO, "Remplissage des champs 'Catégorie'...");
-
-        HtmlSelect categoryElement = form.getSelectByName("category");
-        selectOption(categoryElement, objectSettings.category);
+        selectOption(form.findElement(By.name("category")), objectSettings.category);
 
         logger.log(Level.INFO, "Remplissage des champs 'Vos informations'...");
-
-        HtmlInput nameElement = form.getInputByName("name");
-        nameElement.setValueAttribute(sellerSettings.name);
-
-        HtmlInput emailElement = form.getInputByName("email");
-        emailElement.setValueAttribute(sellerSettings.email);
-
-        HtmlInput phoneElement = form.getInputByName("phone");
-        phoneElement.setValueAttribute(sellerSettings.phoneNumber);
-
-        HtmlInput phoneHiddenElement = form.getInputByName("phone_hidden");
-        phoneHiddenElement.setChecked(true);
+        //form.findElement(By.name("name")).sendKeys(sellerSettings.name);
+        //form.findElement(By.name("email")).sendKeys(sellerSettings.email);
+        //form.findElement(By.name("phone")).sendKeys(sellerSettings.phoneNumber);
+        
+        WebElement phoneHiddenElement = form.findElement(By.name("phone_hidden"));
+        if(!phoneHiddenElement.isSelected()) {
+            phoneHiddenElement.click();
+        }
 
         logger.log(Level.INFO, "Remplissage des champs 'Votre annonce'...");
-
-        HtmlInput subjectElement = form.getInputByName("subject");
-        subjectElement.setValueAttribute(objectSettings.subject);
-
-        HtmlTextArea bodyElement = (HtmlTextArea) postAdPage.getElementById("body");
-        bodyElement.setText(objectSettings.body);
-
-        HtmlInput priceElement = form.getInputByName("price");
-        priceElement.setValueAttribute(objectSettings.price);
+        form.findElement(By.name("subject")).sendKeys(objectSettings.subject);
+        form.findElement(By.name("body")).sendKeys(objectSettings.body);
+        form.findElement(By.name("price")).sendKeys(objectSettings.price);
 
         int nbImages = java.lang.Math.min(3, objectSettings.imageFiles.length);
         for(int i = 0; i < nbImages; i++) {
-            HtmlFileInput imageInput = (HtmlFileInput) postAdPage.getElementById("image" + i);
+        	WebElement imageInput = driver.findElement(By.id("image" + i));
             String imagePath = objectSettings.imageFiles[i].getAbsolutePath();
-            imageInput.setValueAttribute(imagePath);
-            String contentType = URLConnection.guessContentTypeFromName(imagePath);
-            imageInput.setContentType(contentType);
-            // HtmlSubmitInput uploadButton = (HtmlSubmitInput)
-            // postAdPage.getFirstByXPath("//input[@class='button-upload']");
-            // postAdPage = uploadButton.click();
+        	imageInput.sendKeys(imagePath);
         }
 
         logger.log(Level.INFO, "Validation...");
-
-        HtmlInput validateButton = form.getInputByName("validate");
-        HtmlPage validationPage = validateButton.click();
-        Assert.assertNotNull(validationPage);
-
-        List<?> errorsElements = validationPage.getByXPath("//span[@class='error']");
-        for (Object error : errorsElements) {
-            HtmlElement errorElement = (HtmlElement) error;
-            if ("".equals(errorElement.asText()) == false)
-                System.err.println("Error: " + errorElement.asText());
+        driver.findElement(By.name("validate")).click(); // not reachable via form anymore
+        List<WebElement> errorsElements = driver.findElements(By.xpath("//span[@class='error']"));
+        for (WebElement errorElement : errorsElements) {
+            if (!errorElement.getText().isEmpty())
+                System.err.println("Error: " + errorElement.getText());
         }
 
-        Assert.assertEquals("Vérifiez votre annonce.", validationPage.getTitleText());
+        Assert.assertEquals("Vérifiez votre annonce.", driver.getTitle());
+        
+        for(int i = 0; i < nbImages; i++) {
+        	String text = i > 0 ? "Photo " + (i + 1) : "Photo principale";
+            WebElement photoElement = driver.findElement(By.xpath("//div[text()='" + text + "']"));
+            Assert.assertNotNull("Photo " + (i + 1) + " was not uploaded", photoElement);
+        }
 
-        HtmlElement photoElement = validationPage.getFirstByXPath("//div[text()='Photo principale']");
-        Assert.assertNotNull("Photo was not uploaded", photoElement);
-
-        form = validationPage.getFormByName("formular");
+        form = driver.findElement(By.name("formular"));
 
         logger.log(Level.INFO, "Remplissage des champs 'Vérifiez le contenu de votre annonce'...");
 
-        try {
-        	HtmlSelect cityElement = form.getSelectByName("city");
-            selectOption(cityElement, sellerSettings.city);
-        } catch(ElementNotFoundException e) {
-            logger.log(Level.INFO, "Pas de champs 'city'");
-        }
+     	WebElement element = form.findElement(By.name("city"));
+    	if(element.isDisplayed()) {
+    		selectOption(form.findElement(By.name("city")), sellerSettings.city);
+    	}
+        
+    	form.findElement(By.name("accept_rule")).click();
+    	form.findElement(By.name("create")).click();
 
-        HtmlCheckBoxInput acceptRuleCheckBox = form.getInputByName("accept_rule");
-        acceptRuleCheckBox.setChecked(true);
-
-        HtmlInput createButton = form.getInputByName("create");
-        HtmlPage creationPage = createButton.click();
-
+        Assert.assertTrue(driver.getPageSource().contains("Votre annonce a été envoyée à notre équipe éditoriale."));
+        Assert.assertEquals("Confirmation d'envoi de votre annonce", driver.getTitle());
+        
         logger.log(Level.INFO, "Terminé !");
-
-        Assert.assertEquals("Confirmation d'envoi de votre annonce", creationPage.getTitleText());
-        Assert.assertTrue(creationPage.asText().contains("Votre annonce a été envoyée à notre équipe éditoriale."));
     }
 
-    private static void deleteAd() throws Exception {
-        prepareWebClient();
-        HtmlPage accountPage = loadAccountPage();
+    private static void deleteAd() {
+        loadAccountPage();
 
         logger.log(Level.INFO, "Chargement de la page de l'objet...");
-
-        HtmlAnchor objectLink = accountPage.getFirstAnchorByText(objectSettings.subject);
-        HtmlPage objectPage = objectLink.click();
-        Assert.assertNotNull(objectPage);
-        Assert.assertTrue("Unexpected page: " + objectPage.getTitleText(),
-                objectPage.getTitleText().startsWith(objectSettings.subject));
+        driver.findElement(By.linkText(objectSettings.subject)).click();
+        WebElement deleteElement = driver.findElement(By.linkText("Supprimer"));
+        Assert.assertTrue("Unexpected page: " + driver.getTitle(), driver.getTitle().startsWith(objectSettings.subject));
 
         logger.log(Level.INFO, "Chargement de la page de suppression de l'objet...");
-
-        HtmlAnchor deleteLink = objectPage.getFirstAnchorByText("Supprimer");
-        HtmlPage deleteObjectPage = webClient.getPage(deleteLink.getHrefAttribute());
-        //HtmlPage deleteObjectPage = deleteLink.click();
-        Assert.assertNotNull(deleteObjectPage);
-        Assert.assertEquals("Leboncoin.fr - Gestion de l'annonce", deleteObjectPage.getTitleText());
+        deleteElement.click();
+        WebElement continueElement = driver.findElement(By.xpath("//input[@id='store__continue']")); // wait for page load after click()
+        Assert.assertEquals("Leboncoin.fr - Gestion de l'annonce", driver.getTitle());
 
         logger.log(Level.INFO, "Suppression de l'objet...");
-
-        HtmlInput continueButton = deleteObjectPage.getFirstByXPath("//input[@id='store__continue']");
-        HtmlPage deletionPage = continueButton.click();
-        Assert.assertEquals("Confirmation de votre suppression", deletionPage.getTitleText());
+        continueElement.click();
+        WebElement validateButton = driver.findElement(By.id("st_ads_continue"));
+        Assert.assertEquals("Confirmation de votre suppression", driver.getTitle());
 
         logger.log(Level.INFO, "Validation...");
-
-        HtmlInput validateButton = (HtmlInput) deletionPage.getElementById("st_ads_continue");
-        HtmlPage endPage = validateButton.click();
-        Assert.assertTrue(endPage.asText().contains("Votre demande de suppression"));
-        Assert.assertTrue(endPage.asText().contains("bien été prise en compte."));
+        validateButton.click();
+        Assert.assertTrue(driver.getPageSource().contains("Votre demande de suppression"));
+        Assert.assertTrue(driver.getPageSource().contains("bien été prise en compte."));
     }
 
     private static void loadConfiguration() throws FileNotFoundException {
@@ -271,19 +210,17 @@ public class Main {
         });
     }
 
-    private static void selectOption(HtmlSelect selectElement, String optionText) {
+    private static void selectOption(WebElement selectElement, String optionText) {
         Assert.assertNotNull(selectElement);
-        HtmlOption regionOption = findOption(selectElement, optionText);
-        selectElement.setSelectedAttribute(regionOption, true);
-        Assert.assertEquals(1, selectElement.getSelectedOptions().size());
-        Assert.assertEquals(optionText, selectElement.getSelectedOptions().get(0).asText());
+        WebElement regionOption = findOption(selectElement, optionText);
+        regionOption.click();
     }
 
-    private static HtmlOption findOption(HtmlSelect selectElement, String optionText) {
-        for (HtmlOption option : selectElement.getOptions())
+    private static WebElement findOption(WebElement selectElement, String optionText) {
+        for (WebElement option : selectElement.findElements(By.tagName("option")))
             if (optionText.equals(option.getText()))
                 return option;
-        Assert.assertTrue("No option with text: " + optionText, false);
+        Assert.fail("No option with text: " + optionText);
         return null;
     }
 
